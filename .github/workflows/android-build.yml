@@ -17,36 +17,16 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
-      - name: Accept Android SDK licenses
-        run: yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --licenses || true
-
-      - name: Install Android SDK platform & build-tools
-        run: |
-          $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager "platforms;android-34" "build-tools;34.0.0" "platform-tools" || true
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
-
-      - name: Generate Gradle wrapper in a clean folder
-        run: |
-          mkdir -p /tmp/wrapper-gen
-          cd /tmp/wrapper-gen
-          gradle wrapper --gradle-version 8.4
-          cp gradlew "$GITHUB_WORKSPACE"/
-          cp gradlew.bat "$GITHUB_WORKSPACE"/
-          mkdir -p "$GITHUB_WORKSPACE"/gradle/wrapper
-          cp gradle/wrapper/gradle-wrapper.jar "$GITHUB_WORKSPACE"/gradle/wrapper/
-          cp gradle/wrapper/gradle-wrapper.properties "$GITHUB_WORKSPACE"/gradle/wrapper/
-
-      - name: Grant execute permission for gradlew
-        run: chmod +x gradlew
+        with:
+          gradle-version: 8.4
 
       - name: Build debug APK
-        run: ./gradlew assembleDebug
+        run: gradle assembleDebug
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
           name: edith-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
-          
