@@ -27,8 +27,16 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v3
 
-      - name: Generate Gradle wrapper
-        run: gradle wrapper --gradle-version 8.4
+      - name: Generate Gradle wrapper in a clean folder
+        run: |
+          mkdir -p /tmp/wrapper-gen
+          cd /tmp/wrapper-gen
+          gradle wrapper --gradle-version 8.4
+          cp gradlew "$GITHUB_WORKSPACE"/
+          cp gradlew.bat "$GITHUB_WORKSPACE"/
+          mkdir -p "$GITHUB_WORKSPACE"/gradle/wrapper
+          cp gradle/wrapper/gradle-wrapper.jar "$GITHUB_WORKSPACE"/gradle/wrapper/
+          cp gradle/wrapper/gradle-wrapper.properties "$GITHUB_WORKSPACE"/gradle/wrapper/
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
@@ -41,3 +49,4 @@ jobs:
         with:
           name: edith-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
+          
