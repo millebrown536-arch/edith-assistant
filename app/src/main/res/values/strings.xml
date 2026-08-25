@@ -1,0 +1,7 @@
+<resources>
+    <string name="app_name">Edith</string>
+    <string name="wake_prompt">Say "Edith" or "Vyro" to wake me</string>
+    <string name="listening">Listening…</string>
+    <string name="notif_channel">Edith Wake Word</string>
+    <string name="notif_text">Edith is listening for the wake word</string>
+</resources>
