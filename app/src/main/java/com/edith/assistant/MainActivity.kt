@@ -6,13 +6,14 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.MediaStore
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.edith.assistant.databinding.ActivityMainBinding
 
@@ -23,6 +24,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var memory: MemoryManager
     private lateinit var commandProcessor: CommandProcessor
     private var recognizer: SpeechRecognizer? = null
+    private val followUpHandler = Handler(Looper.getMainLooper())
 
     private val permissionLauncher = registerForActivityResult(
         androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
@@ -40,11 +42,11 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
 
         memory = MemoryManager(this)
+        commandProcessor = CommandProcessor(memory, "Edith")
         tts = TextToSpeechHelper(this) {
             val name = if (tts.isMale) "Vyro" else "Edith"
             commandProcessor = CommandProcessor(memory, name)
         }
-        commandProcessor = CommandProcessor(memory, "Edith")
 
         binding.orbButton.setOnClickListener { startActiveListening() }
 
@@ -60,17 +62,21 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestPermissionsAndStart()
-
-        // If launched by the wake-word service, jump straight into active listening
-        if (intent.getBooleanExtra(EXTRA_AUTO_LISTEN, false)) {
-            binding.root.post { startActiveListening() }
-        }
+        handleLaunchIntent(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        if (intent.getBooleanExtra(EXTRA_AUTO_LISTEN, false)) {
-            startActiveListening()
+        setIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    private fun handleLaunchIntent(intent: Intent) {
+        val directCommand = intent.getStringExtra(EXTRA_COMMAND)
+        val autoListen = intent.getBooleanExtra(EXTRA_AUTO_LISTEN, false)
+        when {
+            !directCommand.isNullOrBlank() -> binding.root.post { handleHeard(directCommand) }
+            autoListen -> binding.root.post { startActiveListening() }
         }
     }
 
@@ -91,7 +97,6 @@ class MainActivity : AppCompatActivity() {
         ContextCompat.startForegroundService(this, svcIntent)
     }
 
-    /** Opens the on-screen orb + listens for one command, like the wake-up screen from the sketch. */
     private fun startActiveListening() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) {
             Toast.makeText(this, "Speech recognition not available on this device.", Toast.LENGTH_LONG).show()
@@ -106,7 +111,8 @@ class MainActivity : AppCompatActivity() {
                 override fun onResults(results: Bundle) {
                     val matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val heard = matches?.firstOrNull().orEmpty()
-                    handleHeard(heard)
+                    if (heard.isNotBlank()) handleHeard(heard)
+                    else binding.statusText.text = getString(R.string.wake_prompt)
                 }
                 override fun onError(error: Int) {
                     binding.statusText.text = getString(R.string.wake_prompt)
@@ -132,7 +138,7 @@ class MainActivity : AppCompatActivity() {
         val action = commandProcessor.process(heard)
         when (action) {
             is EdithAction.Speak -> {
-                tts.speak(action.text)
+                tts.speak(action.text) { scheduleFollowUpListen() }
                 binding.statusText.text = getString(R.string.wake_prompt)
             }
             is EdithAction.SpeakAndOpenCamera -> tts.speak(action.text) {
@@ -150,7 +156,15 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun scheduleFollowUpListen() {
+        binding.statusText.text = "Anything else?"
+        followUpHandler.postDelayed({
+            if (!isFinishing) startActiveListening()
+        }, 500)
+    }
+
     override fun onDestroy() {
+        followUpHandler.removeCallbacksAndMessages(null)
         recognizer?.destroy()
         tts.shutdown()
         super.onDestroy()
@@ -158,5 +172,6 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_AUTO_LISTEN = "auto_listen"
+        const val EXTRA_COMMAND = "direct_command"
     }
 }
