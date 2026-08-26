@@ -3,7 +3,9 @@ package com.edith.assistant
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
+import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
@@ -13,23 +15,16 @@ import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
 import androidx.core.app.NotificationCompat
 
-/**
- * Continuously listens in the background for the wake word ("Edith" or "Vyro").
- * NOTE (prototype limitation): Android's built-in SpeechRecognizer needs to
- * restart after every short listening window, so this is a "listen -> pause
- * -> re-listen" loop rather than a true always-on low-power wake word engine.
- * For production-grade always-on detection, swap this for an offline wake
- * word SDK (e.g. Picovoice Porcupine) — the rest of the app (MainActivity,
- * TTS, memory, commands) stays the same either way.
- */
 class WakeWordService : Service() {
 
     private var recognizer: SpeechRecognizer? = null
     private val handler = Handler(Looper.getMainLooper())
     private val wakeWords = listOf("edith", "vyro", "hey edith", "hey vyro")
+    private lateinit var audioManager: AudioManager
 
     override fun onCreate() {
         super.onCreate()
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
         startForeground(NOTIF_ID, buildNotification())
         startListeningLoop()
     }
@@ -38,6 +33,16 @@ class WakeWordService : Service() {
 
     override fun onBind(intent: Intent?) = null
 
+    private fun muteBeep(mute: Boolean) {
+        try {
+            audioManager.adjustStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                if (mute) AudioManager.ADJUST_MUTE else AudioManager.ADJUST_UNMUTE,
+                0
+            )
+        } catch (_: Exception) { }
+    }
+
     private fun startListeningLoop() {
         if (!SpeechRecognizer.isRecognitionAvailable(this)) return
 
@@ -45,42 +50,52 @@ class WakeWordService : Service() {
         recognizer = SpeechRecognizer.createSpeechRecognizer(this).apply {
             setRecognitionListener(object : RecognitionListener {
                 override fun onResults(results: Bundle) {
+                    muteBeep(false)
                     val matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     val heard = matches?.firstOrNull()?.lowercase().orEmpty()
-                    if (wakeWords.any { heard.contains(it) }) {
-                        launchAssistant()
+                    val matchedWake = wakeWords
+                        .sortedByDescending { it.length }
+                        .firstOrNull { heard.contains(it) }
+
+                    if (matchedWake != null) {
+                        val remainder = heard.substringAfter(matchedWake).trim()
+                        launchAssistant(if (remainder.isNotEmpty()) remainder else null)
                     }
                     restartSoon()
                 }
-                override fun onError(error: Int) { restartSoon() }
-                override fun onReadyForSpeech(params: Bundle?) {}
+                override fun onError(error: Int) { muteBeep(false); restartSoon() }
+                override fun onReadyForSpeech(params: Bundle?) { muteBeep(true) }
                 override fun onBeginningOfSpeech() {}
                 override fun onRmsChanged(rmsdB: Float) {}
                 override fun onBufferReceived(buffer: ByteArray?) {}
-                override fun onEndOfSpeech() {}
+                override fun onEndOfSpeech() { muteBeep(false) }
                 override fun onPartialResults(partialResults: Bundle?) {}
                 override fun onEvent(eventType: Int, params: Bundle?) {}
             })
             val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                 putExtra(RecognizerIntent.EXTRA_LANGUAGE, "en-US")
+                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
             }
             try {
+                muteBeep(true)
                 startListening(intent)
             } catch (e: Exception) {
+                muteBeep(false)
                 restartSoon()
             }
         }
     }
 
     private fun restartSoon() {
-        handler.postDelayed({ startListeningLoop() }, 600)
+        handler.postDelayed({ startListeningLoop() }, 900)
     }
 
-    private fun launchAssistant() {
+    private fun launchAssistant(command: String?) {
         val launch = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             putExtra(MainActivity.EXTRA_AUTO_LISTEN, true)
+            if (command != null) putExtra(MainActivity.EXTRA_COMMAND, command)
         }
         startActivity(launch)
     }
@@ -101,6 +116,7 @@ class WakeWordService : Service() {
     }
 
     override fun onDestroy() {
+        muteBeep(false)
         recognizer?.destroy()
         handler.removeCallbacksAndMessages(null)
         super.onDestroy()
